@@ -30,7 +30,8 @@ from boolean.boolean import (
 
 from . import views
 from . import perturbations
-from . import sa
+
+# from . import sa
 from .cana import cana_values_to_sign
 from .evaluation import check_single_target_reachable_from_source
 from .utils import (
@@ -80,6 +81,140 @@ _perturb_star = (
 )
 _perturb_star_opts = tuple(k for k, v in _perturb_star)
 _perturb_star_map = dict(_perturb_star)
+
+
+def exponential_chooling_scheme(alpha, T, k):
+    """typically alpha ~ [0.7, 0.9]"""
+    return np.pow(alpha, k) * T
+
+
+def energy_mismatched_markers(
+    bn, source, target, max_attrs=None, norm_delta=False, norm_card=False
+):
+    ndelta = sum(1 for n in bn if source[n] != target[n])
+    global_energy = 0
+    Ae = enumerate(bn.attractors(reachable_from=source, star=-1))
+    if max_attrs is not None:
+        for _, (i, a) in zip(range(max_attrs), Ae):
+            local_energy = sum(1 for n in bn if a[n] != target[n])
+            if norm_delta:
+                local_energy /= ndelta
+            global_energy += local_energy
+    else:
+        for i, a in Ae:
+            local_energy = sum(1 for n in bn if a[n] != target[n])
+            if norm_delta:
+                local_energy /= ndelta
+            global_energy += local_energy
+    if norm_card:
+        global_energy /= i + 1
+    return global_energy
+
+
+def sample_valid_subset(
+    prior_sets: list[tuple[str, str, int]],
+    weights: pd.Series | None = None,
+    set_probs: pd.Series | None = None,
+    expected_cardinal: int | None = None,
+    rng: np.random.Generator | int | None = None,
+):
+    """ """
+    rng = np.random.default_rng(rng)
+    m = len(prior_sets)
+    if set_probs is None:
+        set_probs = np.ones(m) / m
+    else:
+        set_probs = np.asarray(set_probs, dtype=float)
+        set_probs = set_probs / set_probs.sum()
+
+    i = rng.choice(m, p=set_probs)
+    S = prior_sets[i]
+    N = len(S)
+    nd = N - 1
+    if expected_cardinal:
+        nd = min(expected_cardinal, nd)
+
+    if weights is None:
+        weights = pd.Series(np.ones(N), index=S, name="weights") / N
+    adj_weights = weights.copy()
+    adj_weights = adj_weights.clip(lower=0).fillna(0.0)
+    w = adj_weights.loc[pd.MultiIndex.from_tuples(S)]
+
+    if w.sum() == 0:
+        return []
+
+    lam = np.log(np.exp(w).sum() / (N - nd))
+    p = 1.0 - np.exp(-lam * w)
+    beta = nd / p.sum()
+    p *= beta
+    p = p.clip(lower=0, upper=1)
+    mask = rng.random(len(p)) < p
+    return i, w.index[mask].sort_values().to_list()
+
+
+def sample_valid_subset2(
+    prior_sets: list[tuple[str, str, int]],
+    weights: pd.Series | None = None,
+    set_probs: pd.Series | None = None,
+    expected_cardinal: int | None = None,
+    rng: np.random.Generator | int | None = None,
+):
+    """ """
+    rng = np.random.default_rng(rng)
+    m = len(prior_sets)
+    if set_probs is None:
+        set_probs = np.ones(m) / m
+    else:
+        set_probs = np.asarray(set_probs, dtype=float)
+        set_probs /= set_probs.sum()
+
+    i = rng.choice(m, p=set_probs)
+    S = prior_sets[i]
+    N = len(S)
+    nd = N - 1
+    if expected_cardinal:
+        nd = min(expected_cardinal, nd)
+
+    if weights is None:
+        weights = pd.Series(np.ones(N), index=S, name="weights") / N
+    adj_weights = weights.copy()
+    adj_weights = adj_weights.clip(lower=0).fillna(0.0)
+    w = adj_weights.loc[pd.MultiIndex.from_tuples(S)]
+    w = w / w.sum()
+
+    if w.sum() == 0:
+        return []
+
+    # lam = np.log(np.exp(w).sum() / (N - nd))
+    # p = 1.0 - np.exp(-lam*w)
+    p = w
+    beta = nd / p.sum()
+    p *= beta
+    p.clip(lower=0, upper=1)
+    mask = rng.random(len(p)) < p
+    return i, w.index[mask].sort_values().to_list()
+
+
+def sample_valid_subset_surely(
+    prior_sets: list[tuple[str, str, int]],
+    weights: pd.Series | None = None,
+    set_probs: pd.Series | None = None,
+    expected_cardinal: int | None = None,
+    rng: np.random.Generator | int | None = None,
+    max_attempts: int = 1000,
+):
+    sam = []
+    attempts = 0
+    while not sam and attempts < max_attempts:
+        attempts += 1
+        i, sam = sample_valid_subset(
+            prior_sets=prior_sets,
+            weights=weights,
+            set_probs=set_probs,
+            expected_cardinal=expected_cardinal,
+            rng=rng,
+        )
+    return i, sam
 
 
 def main():
@@ -165,18 +300,18 @@ def main():
         default=0.995,
         help=""" Damping factor for the exponential cooling.""",
     )
+    # bounds_group.add_argument(
+    #    "-mf1",
+    #    "--momentum-factor-1",
+    #    type=float,
+    #    default=None,
+    #    help=""" Multiplier for the weight of the current FES, before normalisation. """,
+    # )
     bounds_group.add_argument(
-        "-mf1",
-        "--momentum-factor-1",
+        "-emf",
+        "--edge-momentum-factor",
         type=float,
-        default=golden_ratio,
-        help=""" Multiplier for the weight of the current FES, before normalisation. """,
-    )
-    bounds_group.add_argument(
-        "-mf2",
-        "--momentum-factor-2",
-        type=float,
-        default=golden_ratio,
+        default=None,
         help=""" Multiplier for the weights of the current edges, before normalisation. """,
     )
     bounds_group.add_argument(
@@ -486,6 +621,17 @@ def main():
             index=_set_indexer,
             columns=_set_indexer,
         )
+        ### Make the distance matrix communicating (repair)
+        G_fes = nx.from_pandas_adjacency(similarity, create_using=nx.DiGraph)
+        is_sc = nx.is_strongly_connected(G_fes)
+        if not is_sc:
+            prior_nonzero_min = similarity[similarity > 0.0].min(axis=None).item()
+            similarity[np.isclose(similarity, 0.0)] = prior_nonzero_min
+            G_fes = nx.from_pandas_adjacency(similarity, create_using=nx.DiGraph)
+            is_sc = nx.is_strongly_connected(G_fes)
+            assert is_sc
+        ### End distance matrix reparation
+
         nosim = similarity.apply(lambda col: col / col.sum())
         ### END PRIOR SET CONSTRUCTION
 
@@ -555,6 +701,10 @@ def main():
                     current_set_probs /= current_set_probs.sum()
                 sampled_set_index = rng.choice(n_prior_sets, p=current_set_probs)
                 _current_set = valid_prior_sets[sampled_set_index]
+                if (sm is not None) and (args.edge_momentum_factor):
+                    current_edge_weights[
+                        pd.MultiIndex.from_tuples(sm)
+                    ] *= args.edge_momentum_factor
                 current_edge_weights = current_edge_weights.loc[
                     pd.MultiIndex.from_tuples(_current_set)
                 ]
@@ -585,7 +735,7 @@ def main():
                     case "strict":
                         mutant, _posterior_interventions = perturb_func(bn, sm, b)
 
-                satE = sa.energy_mismatched_markers(
+                satE = energy_mismatched_markers(
                     mutant, ca, cb, norm_card=True, norm_delta=True
                 )
                 nsm = len(sm)
