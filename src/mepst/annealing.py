@@ -58,6 +58,7 @@ _perturbation_types = {
     "cutting": perturbations.cutting_edgetic_perturbations,
     "flipping": perturbations.flipping_edgetic_perturbations,
     "targeted": perturbations.targeted_edgetic_perturbations,
+    "strict": perturbations.strict_targeted_edgetic_perturbations,
 }
 _output_suffixes = (
     ".config",
@@ -333,12 +334,12 @@ def main():
         help="""Update edge weights during the annealing simulation, according to the edge improvement factor.""",
     )
     bounds_group.add_argument(
-        "--eif",
+        "-eif",
         "--edge-improvement-factor",
         type=float,
         default=1.0005,
         help="""Only used whenever `--adaptive-edge-weights` is passed.
-        1.0 has no effect, 1.1 means increasing the probability by 10% (before rescaling).""",
+        1.0 has no effect, 1.1 means increasing the probability by 10 percent (before rescaling).""",
     )
     parser.add_argument(
         "-cl",
@@ -396,7 +397,8 @@ def main():
         "--perturbation-type",
         choices=tuple(_perturbation_types),
         default="targeted",
-        help="""`cutting` aims to remove the interaction, `flipping` negates the context, `targeted` monotonically favours the target.""",
+        help="""`cutting` aims to remove the interaction, `flipping` negates the context, `targeted` and `strict` monotonically favour the target.
+        `targeted` negates canalisations whenever the node in the target attractor is free (MTS), whereas strict only perturbs edges when the node in the target attractor is fixed.""",
     )
     parser.add_argument(
         "-sp",
@@ -493,8 +495,16 @@ def main():
         source = iattrs.loc[ia, :]
         target = iattrs.loc[ib, :]
         #### BEGIN OPT : (do not repeat the computations common to (s -> t) and (t -> s)
-        deltas = (source.fillna("*") != target.fillna("*")).pipe(
-            lambda s: s.index[s].sort_values().to_list()
+        deltas = (
+            (source.fillna("*") != target.fillna("*"))
+            .pipe(
+                lambda s: (
+                    s
+                    if not args.minimal_delta
+                    else (s & ~(source.isna() | target.isna()))
+                )
+            )
+            .pipe(lambda s: s.index[s].sort_values().to_list())
         )
         if args.debug:
             print(f"{len(deltas)=}", flush=True)

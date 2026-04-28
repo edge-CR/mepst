@@ -144,6 +144,12 @@ def main():
         description="Ways of limiting the space of edgetic perturbation candidates.",
     )
     bounds_group.add_argument(
+        "-md",
+        "--minimal-delta",
+        action="store_true",
+        help=""" Minimal delta: If any (source/target) attractor has free components, chose the states such that delta is minimal. """,
+    )
+    bounds_group.add_argument(
         "-rpt",
         "--reverse_powerset_traversal",
         action="store_true",
@@ -243,7 +249,8 @@ def main():
         # nargs="*",
         # default=["targeted"],
         default="targeted",
-        help="""`cutting` aims to remove the interaction, `flipping` negates the context, `targeted` monotonically favours the target.""",
+        help="""`cutting` aims to remove the interaction, `flipping` negates the context, `targeted` and `strict` monotonically favour the target.
+        `targeted` negates canalisations whenever the node in the target attractor is free (MTS), whereas strict only perturbs edges when the node in the target attractor is fixed.""",
     )
     # parser.add_argument(
     #    "-heu",
@@ -346,8 +353,16 @@ def main():
         source = iattrs.loc[ia, :]
         target = iattrs.loc[ib, :]
         #### BEGIN OPT : (do not repeat the computations common to (s -> t) and (t -> s)
-        deltas = (source.fillna("*") != target.fillna("*")).pipe(
-            lambda s: s.index[s].sort_values().to_list()
+        deltas = (
+            (source.fillna("*") != target.fillna("*"))
+            .pipe(
+                lambda s: (
+                    s
+                    if not args.minimal_delta
+                    else (s & ~(source.isna() | target.isna()))
+                )
+            )
+            .pipe(lambda s: s.index[s].sort_values().to_list())
         )
         if args.debug:
             print(f"{len(deltas)=}", flush=True)
