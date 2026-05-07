@@ -61,6 +61,7 @@ _output_suffixes = (
     ".out",
     "cycles.asp",
     "fes.asp",
+    "min_fes.jl",
 )
 _exports = (
     ("config", _output_suffixes[0]),
@@ -69,6 +70,7 @@ _exports = (
 _extras = (
     ("cycles", _output_suffixes[2]),
     ("fes", _output_suffixes[3]),
+    ("min_fes", _output_suffixes[4]),
 )
 _possible_extras = tuple(k for k, v in _extras)
 _perturb_star = (
@@ -78,6 +80,12 @@ _perturb_star = (
 )
 _perturb_star_opts = tuple(k for k, v in _perturb_star)
 _perturb_star_map = dict(_perturb_star)
+
+
+def cast_min_ts_series_to_dict(s):
+    return (
+        s.fillna("*").map(lambda el: el if isinstance(el, str) else int(el)).to_dict()
+    )
 
 
 def main():
@@ -118,13 +126,20 @@ def main():
         nargs="+",
         choices=_possible_extras,
         default=tuple(),
-        help="""Extra exports (on top of )""",
+        help="""Extra exports (on top of the configuration and output files)""",
     )
     io_group.add_argument(
         "-eo",
         "--export-only",
         action="store_true",
         help="""Perform no calculations, export all the possible extra ASP files, run no further calculations.""",
+    )
+    io_group.add_argument(
+        "-ss",
+        "--skip-search",
+        action="store_true",
+        help="""Compute the size of the minimal fes then enumerate all the minimal fes.
+        To be used in conjunction with `-ee min_fes`.""",
     )
     io_group.add_argument(
         "-infc",
@@ -285,7 +300,9 @@ def main():
     _outd["parsed_args"] = _parsed_args
     ### START ARG PROCESSING
     if args.export_only or args.debug:
-        args.extra_exports = _possible_extras
+        args.extra_exports = _possible_extras[:-1]
+        # ^ remove the min_fes because they require computation
+        # and export only is intended to simply check
     args.exports = _exports + tuple(
         (k, v) for k, v in _extras if k in args.extra_exports
     )
@@ -463,7 +480,7 @@ def main():
         enum_fes_view.custom(
             f":- #count {{ S,T,R : remove(S,T,R)}} = SOLSIZE, SOLSIZE > {len(fes)}."
         )
-        psb = None
+        psb = len(fes) - 1
         if args.auto_powerset_size_bound:
             if args.powerset_size_bound:
                 psb = min(len(fes) - 1, args.powerset_size_bound)
@@ -471,6 +488,18 @@ def main():
                 psb = len(fes) - 1
         # assert psb <= len(fes) - 1
         FES = list(enum_fes_view)
+        if (_extra := "min_fes") in export_dict:
+            with open(args.out_dir / f"{_bnf_stem}_{export_dict[_extra]}", "a") as f:
+                _bodata = {
+                    "source_id": ia,
+                    "target_id": ib,
+                    "source": cast_min_ts_series_to_dict(iattrs.loc[ia, :]),
+                    "target": cast_min_ts_series_to_dict(iattrs.loc[ib, :]),
+                }
+                for _mfes in FES:
+                    _odata = _bodata | {"fes": _mfes}
+                    f.write(f"{json.dumps(_odata, cls=GenericEncoder)}\n")
+
         if args.only_check_exhaustive_fes:
 
             def make_search_space():
@@ -490,6 +519,8 @@ def main():
                 return join_powersets(possible_powersets)
 
         ### END CYCLES
+        if args.skip_search:
+            continue
 
         for i in range(2):
             if i:  # Flip source and target
